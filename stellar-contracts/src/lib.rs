@@ -18,6 +18,7 @@ pub enum Error {
     RequestNotFound = 8,
     TokenNotWhitelisted = 9,
     ReferenceTooLong = 10,
+    CooldownActive = 11,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -26,16 +27,8 @@ pub enum Error {
 pub struct WithdrawRequest {
     pub to: Address,
     pub token: Address,
-    pub token: Address,
     pub amount: i128,
     pub unlock_ledger: u32,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokenConfig {
-    pub limit: i128,
-    pub total_deposited: i128,
 }
 
 #[contracttype]
@@ -80,9 +73,11 @@ pub enum DataKey {
     WithdrawQueue(u64),
     NextRequestID,
     TokenRegistry(Address),
-    TokenRegistry(Address),
     ReceiptCounter,
     Receipt(u64),
+    DailyWithdrawLimit,
+    DepositCooldown,
+    LastDepositLedger(Address),
 }
 
 /// Approximate number of ledgers in a 24-hour window (5-second close time).
@@ -94,7 +89,6 @@ pub struct FiatBridge;
 
 #[contractimpl]
 impl FiatBridge {
-    /// Initialise the bridge once. Sets admin and registers the first whitelisted token.
     /// Initialise the bridge once. Sets admin and registers the first whitelisted token.
     pub fn init(env: Env, admin: Address, token: Address, limit: i128) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
@@ -109,10 +103,6 @@ impl FiatBridge {
             limit,
             total_deposited: 0,
         };
-        let config = TokenConfig {
-            limit,
-            total_deposited: 0,
-        };
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token), &config);
@@ -121,17 +111,34 @@ impl FiatBridge {
 
     /// Lock tokens inside the bridge and issue a deposit receipt.
     /// The token must be registered in the whitelist.
-    /// The token must be registered in the whitelist.
     /// Returns the unique receipt ID on success.
     pub fn deposit(
         env: Env,
         from: Address,
         amount: i128,
         token: Address,
-        token: Address,
         reference: Bytes,
     ) -> Result<u64, Error> {
         from.require_auth();
+
+        // ── Cooldown check ────────────────────────────────────────────
+        let cooldown: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DepositCooldown)
+            .unwrap_or(0);
+        if cooldown > 0 {
+            let last_key = DataKey::LastDepositLedger(from.clone());
+            if let Some(last_ledger) = env
+                .storage()
+                .instance()
+                .get::<DataKey, u32>(&last_key)
+            {
+                if env.ledger().sequence() - last_ledger < cooldown {
+                    return Err(Error::CooldownActive);
+                }
+            }
+        }
 
         if reference.len() > MAX_REFERENCE_LEN {
             return Err(Error::ReferenceTooLong);
@@ -149,8 +156,6 @@ impl FiatBridge {
         if amount > config.limit {
             return Err(Error::ExceedsLimit);
         }
-
-        token::Client::new(&env, &token).transfer(
 
         token::Client::new(&env, &token).transfer(
             &from,
@@ -180,8 +185,6 @@ impl FiatBridge {
 
         // ── Update per-token totals ───────────────────────────────────
         config.total_deposited += amount;
-        // ── Update per-token totals ───────────────────────────────────
-        config.total_deposited += amount;
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token.clone()), &config);
@@ -193,11 +196,18 @@ impl FiatBridge {
             .set(&user_key, &(user_total + amount));
         // ── Events ────────────────────────────────────────────────────
         env.events()
-            .publish((Symbol::new(&env, "deposit"), from), amount);
+            .publish((Symbol::new(&env, "deposit"), from.clone()), amount);
         env.events()
             .publish((Symbol::new(&env, "receipt_issued"),), receipt_id);
 
-        Ok(())
+        // ── Record last deposit ledger for cooldown ─────────────────────
+        if cooldown > 0 {
+            env.storage()
+                .instance()
+                .set(&DataKey::LastDepositLedger(from), &env.ledger().sequence());
+        }
+
+        Ok(receipt_id)
     }
 
     /// Withdraw tokens from the bridge. Caller must authorise.
@@ -208,7 +218,6 @@ impl FiatBridge {
             return Err(Error::ZeroAmount);
         }
 
-        let token_client = token::Client::new(&env, &token);
         let token_client = token::Client::new(&env, &token);
 
         let balance = token_client.balance(&env.current_contract_address());
@@ -231,12 +240,6 @@ impl FiatBridge {
         amount: i128,
         token: Address,
     ) -> Result<u64, Error> {
-    pub fn request_withdrawal(
-        env: Env,
-        to: Address,
-        amount: i128,
-        token: Address,
-    ) -> Result<u64, Error> {
         let admin: Address = env
             .storage()
             .instance()
@@ -253,11 +256,6 @@ impl FiatBridge {
             .instance()
             .get(&DataKey::LockPeriod)
             .unwrap_or(0);
-        let lock_period: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::LockPeriod)
-            .unwrap_or(0);
         let unlock_ledger = env.ledger().sequence() + lock_period;
 
         let request_id: u64 = env
@@ -268,7 +266,6 @@ impl FiatBridge {
 
         let request = WithdrawRequest {
             to,
-            token,
             token,
             amount,
             unlock_ledger,
@@ -371,8 +368,6 @@ impl FiatBridge {
 
     /// Update the per-deposit limit for a specific token. Admin only.
     pub fn set_limit(env: Env, token: Address, new_limit: i128) -> Result<(), Error> {
-    /// Update the per-deposit limit for a specific token. Admin only.
-    pub fn set_limit(env: Env, token: Address, new_limit: i128) -> Result<(), Error> {
         if new_limit <= 0 {
             return Err(Error::ZeroAmount);
         }
@@ -470,8 +465,6 @@ impl FiatBridge {
     }
 
     /// Returns the default (init) token address.
-
-    /// Returns the default (init) token address.
     pub fn get_token(env: Env) -> Result<Address, Error> {
         env.storage()
             .instance()
@@ -480,11 +473,7 @@ impl FiatBridge {
     }
 
     /// Per-deposit limit for the default (init) token.
-
-    /// Per-deposit limit for the default (init) token.
     pub fn get_limit(env: Env) -> Result<i128, Error> {
-        let tok: Address = env
-            .storage()
         let tok: Address = env
             .storage()
             .instance()
@@ -496,17 +485,7 @@ impl FiatBridge {
             .get(&DataKey::TokenRegistry(tok))
             .ok_or(Error::NotInitialized)?;
         Ok(config.limit)
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let config: TokenConfig = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TokenRegistry(tok))
-            .ok_or(Error::NotInitialized)?;
-        Ok(config.limit)
     }
-
-    /// Current balance of the default (init) token held by this contract.
 
     /// Current balance of the default (init) token held by this contract.
     pub fn get_balance(env: Env) -> Result<i128, Error> {
@@ -519,22 +498,10 @@ impl FiatBridge {
     }
 
     /// Cumulative deposit total for the default (init) token.
-
-    /// Cumulative deposit total for the default (init) token.
     pub fn get_total_deposited(env: Env) -> Result<i128, Error> {
         let tok: Address = env
             .storage()
-        let tok: Address = env
-            .storage()
             .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let config: TokenConfig = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TokenRegistry(tok))
-            .ok_or(Error::NotInitialized)?;
-        Ok(config.total_deposited)
             .get(&DataKey::Token)
             .ok_or(Error::NotInitialized)?;
         let config: TokenConfig = env
@@ -554,7 +521,7 @@ impl FiatBridge {
             .instance()
             .get(&DataKey::UserDeposited(user))
             .unwrap_or(0))
-
+    }
 
     /// Get details of a withdrawal request.
     pub fn get_withdrawal_request(env: Env, request_id: u64) -> Option<WithdrawRequest> {
@@ -628,6 +595,56 @@ impl FiatBridge {
             .instance()
             .get(&DataKey::ReceiptCounter)
             .unwrap_or(0)
+    }
+
+    // ── Cooldown functions ─────────────────────────────────────────────
+
+    /// Set the per-address deposit cooldown period (in ledgers). Admin only.
+    pub fn set_cooldown(env: Env, ledgers: u32) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::DepositCooldown, &ledgers);
+        Ok(())
+    }
+
+    /// Get the current per-address deposit cooldown period (in ledgers).
+    pub fn get_cooldown(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DepositCooldown)
+            .unwrap_or(0)
+    }
+
+    /// Get the ledger sequence of a user's last deposit, if within the cooldown window.
+    pub fn get_last_deposit_ledger(env: Env, user: Address) -> Option<u32> {
+        let cooldown: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DepositCooldown)
+            .unwrap_or(0);
+        if cooldown == 0 {
+            return None;
+        }
+        let last: Option<u32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastDepositLedger(user));
+        match last {
+            None => None,
+            Some(ledger) => {
+                if env.ledger().sequence() - ledger < cooldown {
+                    Some(ledger)
+                } else {
+                    None
+                }
+            }
+        }
     }
 }
 

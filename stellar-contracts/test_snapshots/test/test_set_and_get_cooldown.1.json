@@ -194,24 +194,12 @@
                       "key": {
                         "vec": [
                           {
-                            "symbol": "CooldownLedgers"
+                            "symbol": "DepositCooldown"
                           }
                         ]
                       },
                       "val": {
                         "u32": 0
-                      }
-                    },
-                    {
-                      "key": {
-                        "vec": [
-                          {
-                            "symbol": "Paused"
-                          }
-                        ]
-                      },
-                      "val": {
-                        "bool": false
                       }
                     },
                     {
