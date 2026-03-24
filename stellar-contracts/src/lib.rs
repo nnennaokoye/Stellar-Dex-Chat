@@ -22,6 +22,7 @@ pub enum Error {
     WithdrawalLocked = 7,
     RequestNotFound = 8,
     NotAllowed = 9
+    TokenNotWhitelisted = 9,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ pub enum Error {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawRequest {
     pub to: Address,
+    pub token: Address,
     pub amount: i128,
     pub unlock_ledger: u32,
 }
@@ -46,13 +48,18 @@ pub struct Receipt {
 /// Maximum allowed length for a deposit reference (bytes).
 const MAX_REFERENCE_LEN: u32 = 64;
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenConfig {
+    pub limit: i128,
+    pub total_deposited: i128,
+}
+
 // ── Storage keys ──────────────────────────────────────────────────────────
 #[contracttype]
 pub enum DataKey {
     Admin,
     Token,
-    BridgeLimit,
-    TotalDeposited,
     LockPeriod,
     Paused,
     WithdrawQueue(u64),
@@ -82,6 +89,7 @@ pub struct AllowlistAddrAdded {
 pub struct AllowlistAddrRemoved {
     #[topic]
     pub addr: Address,
+    TokenRegistry(Address),
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────
@@ -90,7 +98,7 @@ pub struct FiatBridge;
 
 #[contractimpl]
 impl FiatBridge {
-    /// Initialise the bridge once. Sets admin, token address and per-deposit limit.
+    /// Initialise the bridge once. Sets admin and registers the first whitelisted token.
     pub fn init(env: Env, admin: Address, token: Address, limit: i128) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
@@ -100,11 +108,16 @@ impl FiatBridge {
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Token, &token);
-        env.storage().instance().set(&DataKey::BridgeLimit, &limit);
+        let config = TokenConfig {
+            limit,
+            total_deposited: 0,
+        };
         env.storage()
             .instance()
             .set(&DataKey::TotalDeposited, &0_i128);
         env.storage().instance().set(&DataKey::Paused, &false);
+            .persistent()
+            .set(&DataKey::TokenRegistry(token), &config);
         Ok(())
     }
 
@@ -119,6 +132,9 @@ impl FiatBridge {
         if Self::is_paused(env.clone()) {
             return Err(Error::ContractPaused);
         }
+    /// Lock tokens inside the bridge. Caller must authorise.
+    /// The token must be registered in the whitelist.
+    pub fn deposit(env: Env, from: Address, amount: i128, token: Address) -> Result<(), Error> {
         from.require_auth();
 
         // Allowlist gate: when enabled, only approved addresses may deposit.
@@ -140,20 +156,18 @@ impl FiatBridge {
         if amount <= 0 {
             return Err(Error::ZeroAmount);
         }
-        let limit: i128 = env
+
+        let mut config: TokenConfig = env
             .storage()
-            .instance()
-            .get(&DataKey::BridgeLimit)
-            .ok_or(Error::NotInitialized)?;
-        if amount > limit {
+            .persistent()
+            .get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+
+        if amount > config.limit {
             return Err(Error::ExceedsLimit);
         }
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        token::Client::new(&env, &token_id).transfer(
+
+        token::Client::new(&env, &token).transfer(
             &from,
             &env.current_contract_address(),
             &amount,
@@ -185,9 +199,10 @@ impl FiatBridge {
             .instance()
             .get(&DataKey::TotalDeposited)
             .unwrap_or(0);
+        config.total_deposited += amount;
         env.storage()
-            .instance()
-            .set(&DataKey::TotalDeposited, &(total + amount));
+            .persistent()
+            .set(&DataKey::TokenRegistry(token.clone()), &config);
 
         // ── Events ────────────────────────────────────────────────────
         env.events()
@@ -203,17 +218,14 @@ impl FiatBridge {
         if Self::is_paused(env.clone()) {
             return Err(Error::ContractPaused);
         }
+    /// No whitelist check — allows draining balances of removed tokens.
+    pub fn withdraw(env: Env, to: Address, amount: i128, token: Address) -> Result<(), Error> {
         to.require_auth();
         if amount <= 0 {
             return Err(Error::ZeroAmount);
         }
 
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_id);
+        let token_client = token::Client::new(&env, &token);
 
         let balance = token_client.balance(&env.current_contract_address());
         if amount > balance {
@@ -229,7 +241,7 @@ impl FiatBridge {
     }
 
     /// Register a withdrawal request that matures after the lock period. Admin only.
-    pub fn request_withdrawal(env: Env, to: Address, amount: i128) -> Result<u64, Error> {
+    pub fn request_withdrawal(env: Env, to: Address, amount: i128, token: Address) -> Result<u64, Error> {
         let admin: Address = env
             .storage()
             .instance()
@@ -252,6 +264,7 @@ impl FiatBridge {
 
         let request = WithdrawRequest {
             to,
+            token,
             amount,
             unlock_ledger,
         };
@@ -278,12 +291,7 @@ impl FiatBridge {
             return Err(Error::WithdrawalLocked);
         }
 
-        let token_id: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        let token_client = token::Client::new(&env, &token_id);
+        let token_client = token::Client::new(&env, &request.token);
 
         let balance = token_client.balance(&env.current_contract_address());
         if request.amount > balance {
@@ -334,8 +342,8 @@ impl FiatBridge {
         Ok(())
     }
 
-    /// Update the per-deposit limit. Admin only.
-    pub fn set_limit(env: Env, new_limit: i128) -> Result<(), Error> {
+    /// Update the per-deposit limit for a specific token. Admin only.
+    pub fn set_limit(env: Env, token: Address, new_limit: i128) -> Result<(), Error> {
         if new_limit <= 0 {
             return Err(Error::ZeroAmount);
         }
@@ -345,9 +353,16 @@ impl FiatBridge {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
+
+        let mut config: TokenConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenRegistry(token.clone()))
+            .ok_or(Error::TokenNotWhitelisted)?;
+        config.limit = new_limit;
         env.storage()
-            .instance()
-            .set(&DataKey::BridgeLimit, &new_limit);
+            .persistent()
+            .set(&DataKey::TokenRegistry(token), &config);
         Ok(())
     }
 
@@ -385,6 +400,60 @@ impl FiatBridge {
         Ok(())
     }
 
+    // ── Token registry management (admin-only) ───────────────────────────
+
+    /// Add a new token to the whitelist. Admin only.
+    pub fn add_token(env: Env, token: Address, limit: i128) -> Result<(), Error> {
+        if limit <= 0 {
+            return Err(Error::ZeroAmount);
+        }
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        let config = TokenConfig {
+            limit,
+            total_deposited: 0,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::TokenRegistry(token.clone()), &config);
+
+        env.events()
+            .publish((Symbol::new(&env, "token_added"),), token);
+        Ok(())
+    }
+
+    /// Remove a token from the whitelist. Admin only.
+    /// Does not affect existing balances — admin can still drain remaining tokens.
+    pub fn remove_token(env: Env, token: Address) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::TokenRegistry(token.clone()))
+        {
+            return Err(Error::TokenNotWhitelisted);
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::TokenRegistry(token.clone()));
+
+        env.events()
+            .publish((Symbol::new(&env, "token_removed"),), token);
+        Ok(())
+    }
+
     // ── View functions ────────────────────────────────────────────────────
     pub fn get_admin(env: Env) -> Result<Address, Error> {
         env.storage()
@@ -392,19 +461,28 @@ impl FiatBridge {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)
     }
+    /// Returns the default (init) token address.
     pub fn get_token(env: Env) -> Result<Address, Error> {
         env.storage()
             .instance()
             .get(&DataKey::Token)
             .ok_or(Error::NotInitialized)
     }
+    /// Per-deposit limit for the default (init) token.
     pub fn get_limit(env: Env) -> Result<i128, Error> {
-        env.storage()
+        let tok: Address = env
+            .storage()
             .instance()
-            .get(&DataKey::BridgeLimit)
-            .ok_or(Error::NotInitialized)
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)?;
+        let config: TokenConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenRegistry(tok))
+            .ok_or(Error::NotInitialized)?;
+        Ok(config.limit)
     }
-    /// Current token balance held by this contract.
+    /// Current balance of the default (init) token held by this contract.
     pub fn get_balance(env: Env) -> Result<i128, Error> {
         let token_id: Address = env
             .storage()
@@ -413,12 +491,19 @@ impl FiatBridge {
             .ok_or(Error::NotInitialized)?;
         Ok(token::Client::new(&env, &token_id).balance(&env.current_contract_address()))
     }
-    /// Running total of all historical deposits (never decremented).
+    /// Cumulative deposit total for the default (init) token.
     pub fn get_total_deposited(env: Env) -> Result<i128, Error> {
-        env.storage()
+        let tok: Address = env
+            .storage()
             .instance()
-            .get(&DataKey::TotalDeposited)
-            .ok_or(Error::NotInitialized)
+            .get(&DataKey::Token)
+            .ok_or(Error::NotInitialized)?;
+        let config: TokenConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenRegistry(tok))
+            .ok_or(Error::NotInitialized)?;
+        Ok(config.total_deposited)
     }
     /// Get details of a withdrawal request.
     pub fn get_withdrawal_request(env: Env, request_id: u64) -> Option<WithdrawRequest> {
@@ -540,6 +625,12 @@ impl FiatBridge {
             .instance()
             .get(&DataKey::AllowlistEnabled)
             .unwrap_or(false)
+    }
+    /// Look up a token's configuration (limit and cumulative deposits).
+    pub fn get_token_config(env: Env, token: Address) -> Option<TokenConfig> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TokenRegistry(token))
     }
 }
 
