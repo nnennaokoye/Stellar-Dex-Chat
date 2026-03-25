@@ -127,6 +127,7 @@ export class ChatHistoryManager {
         role: msg.role,
         content: msg.content,
         timestamp: msg.timestamp.toISOString(),
+        metadata: msg.metadata,
       })),
       createdAt: session.createdAt.toISOString(),
     };

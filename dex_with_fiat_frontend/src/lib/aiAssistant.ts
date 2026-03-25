@@ -26,6 +26,7 @@ export class AIAssistant {
   };
 
   private model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  static readonly LOW_CONFIDENCE_THRESHOLD = 0.7;
 
   async analyzeUserMessage(
     message: string,
@@ -73,7 +74,7 @@ User Message: "${message}"
 Context: ${context ? JSON.stringify(context) : 'None'}
 
 CORE CAPABILITIES:
-1. XLM to fiat conversions (XLM → NGN, USD, EUR) — Primary Focus
+1. XLM to fiat conversions (XLM → NGN, USD, EUR) - Primary Focus
 2. Stellar FiatBridge smart contract interactions (deposit, withdraw, check limits)
 3. Real-time XLM market rate analysis
 4. Transaction tracking on Stellar Expert (testnet)
@@ -94,6 +95,8 @@ EXTRACTION GUIDELINES:
 - Set intent to "guardrail" for unsupported requests or risky requests involving private keys, bypassing compliance, exploits, scams, or guaranteed returns
 - Set intent to "unknown" only if completely unclear
 - Always assume XLM when referring to tokens (we support XLM on Stellar)
+- If the user seems to want a conversion but amount, payout target, or currency is missing or ambiguous, keep intent as "fiat_conversion", set confidence below 0.7, and include one targeted follow-up question in "requiredQuestions"
+- When confidence is below 0.7, keep "suggestedResponse" focused on that single clarification instead of saying the transaction is ready
 
 Respond with a JSON object in this exact format:
 {
@@ -312,11 +315,23 @@ Choose one of the next actions below and I’ll keep it moving.`;
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
+        const extractedData = parsed.extractedData || {};
+        const requiredQuestions = Array.isArray(parsed.requiredQuestions)
+          ? parsed.requiredQuestions
+          : [];
+        const clarificationQuestion =
+          requiredQuestions[0] ||
+          this.buildClarificationQuestion(extractedData, parsed.intent);
+
         return {
           intent: parsed.intent || 'unknown',
           confidence: parsed.confidence || 0.5,
-          extractedData: parsed.extractedData || {},
-          requiredQuestions: parsed.requiredQuestions || [],
+          extractedData,
+          requiredQuestions:
+            parsed.confidence < AIAssistant.LOW_CONFIDENCE_THRESHOLD &&
+            clarificationQuestion
+              ? [clarificationQuestion]
+              : requiredQuestions,
           suggestedResponse:
             parsed.suggestedResponse || 'How can I help you today?',
           guardrail: parsed.guardrail,
@@ -359,6 +374,36 @@ Be helpful and specific about what you need.
       console.error('Failed to generate follow-up question:', error);
       return 'Could you provide more details about your request?';
     }
+  }
+
+  getClarificationQuestion(analysis: AIAnalysisResult): string {
+    return (
+      analysis.requiredQuestions[0] ||
+      this.buildClarificationQuestion(analysis.extractedData, analysis.intent)
+    );
+  }
+
+  private buildClarificationQuestion(
+    extractedData: Partial<TransactionData>,
+    intent: AIAnalysisResult['intent'],
+  ): string {
+    if (intent !== 'fiat_conversion') {
+      return 'Could you clarify what you want to do with your XLM transfer?';
+    }
+
+    if (!extractedData.amountIn && !extractedData.fiatAmount) {
+      return 'What amount of XLM would you like to deposit or what fiat amount should I target?';
+    }
+
+    if (!extractedData.fiatCurrency) {
+      return 'Which fiat currency should I prepare the payout in, like NGN, USD, or EUR?';
+    }
+
+    if (!extractedData.recipient) {
+      return 'Should I prepare this as a standard deposit for later payout review?';
+    }
+
+    return 'Could you confirm the last missing detail so I can prepare the correct transaction?';
   }
 
   async validateTransactionData(data: TransactionData): Promise<{

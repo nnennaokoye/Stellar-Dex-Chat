@@ -38,6 +38,7 @@ export default function NotificationsCenter() {
       case 'payout_pending': return 'text-yellow-500';
       case 'payout_success': return 'text-green-500';
       case 'payout_fail': return 'text-red-500';
+      case 'risk_warning': return 'text-amber-500';
       default: return 'text-gray-500';
     }
   };

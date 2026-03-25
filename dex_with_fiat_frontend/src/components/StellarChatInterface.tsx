@@ -235,10 +235,10 @@ export default function StellarChatInterface() {
   }, []);
 
   // After a successful deposit, close the deposit modal and open bank details
-  const handleDepositSuccess = useCallback((xlmAmount: number) => {
+  const handleDepositSuccess = useCallback((result: { xlmAmount: number; note?: string }) => {
     setShowModal(false);
     setDefaultAmount('');
-    setBankDetailsXlmAmount(xlmAmount);
+    setBankDetailsXlmAmount(result.xlmAmount);
     setShowBankDetails(true);
   }, []);
 
@@ -284,10 +284,8 @@ export default function StellarChatInterface() {
   );
 
   return (
-    <div
-      className={`flex h-screen w-screen overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-900'}`}
-    >
-      {/* Desktop sidebar — only rendered on md+ viewports */}
+    <div className="theme-app flex h-screen w-screen overflow-hidden transition-colors duration-300">
+      {/* Desktop sidebar - only rendered on md+ viewports */}
       {!isMobile && showSidebar && (
         <div className="shrink-0 w-72">
           {isLoading ? (
@@ -305,9 +303,7 @@ export default function StellarChatInterface() {
       {/* Main */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Header */}
-        <header
-          className={`flex-shrink-0 flex items-center justify-between px-4 py-3 border-b transition-colors duration-300 ${isDarkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'}`}
-        >
+        <header className="theme-surface theme-border flex-shrink-0 flex items-center justify-between px-4 py-3 border-b transition-colors duration-300">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowSidebar(!showSidebar)}
@@ -503,7 +499,7 @@ export default function StellarChatInterface() {
         </div>
       </div>
 
-      {/* Mobile bottom-sheet — only rendered when isSheetMounted */}
+      {/* Mobile bottom-sheet - only rendered when isSheetMounted */}
       {isSheetMounted && (
         <>
           {/* Backdrop */}

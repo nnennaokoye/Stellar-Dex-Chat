@@ -11,6 +11,8 @@ export interface ChatMessage {
     autoTriggerTransaction?: boolean;
     conversationCount?: number;
     guardrail?: GuardrailResult;
+    lowConfidence?: boolean;
+    clarificationQuestion?: string;
   };
 }
 
@@ -38,6 +40,22 @@ export interface TransactionData {
   recipient?: string;
   transactionId?: string;
   txHash?: string; // Transaction hash for completed transactions
+  note?: string;
+}
+
+export interface TransactionHistoryEntry {
+  id: string;
+  kind: 'deposit' | 'payout' | 'risk_warning';
+  status: 'pending' | 'completed' | 'warning' | 'failed';
+  amount?: string;
+  asset?: string;
+  fiatAmount?: string;
+  fiatCurrency?: string;
+  note?: string;
+  txHash?: string;
+  reference?: string;
+  message: string;
+  createdAt: Date;
 }
 
 export interface SuggestedAction {

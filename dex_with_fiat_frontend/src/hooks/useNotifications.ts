@@ -1,6 +1,12 @@
 import { useSyncExternalStore } from 'react';
 
-export type NotificationType = 'tx_submit' | 'tx_confirm' | 'payout_pending' | 'payout_success' | 'payout_fail';
+export type NotificationType =
+  | 'tx_submit'
+  | 'tx_confirm'
+  | 'payout_pending'
+  | 'payout_success'
+  | 'payout_fail'
+  | 'risk_warning';
 
 export interface AppNotification {
   id: string;
