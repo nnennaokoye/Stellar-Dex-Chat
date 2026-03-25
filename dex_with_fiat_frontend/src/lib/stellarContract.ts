@@ -33,6 +33,16 @@ export const BRIDGE_LIMIT_WARNING_PERCENT = 80;
 export const DUMMY_SOURCE =
   'GBEFLW6RTALNHCL7HW2INWB4ASHZ7E6MF6E2IOIIMBVEAU2B2B4XLRQW';
 
+// FeeEstimate describes estimated fees returned by transaction simulation.
+// `minFee` is represented as a string of stroops (to avoid bigint JSON issues),
+// while `fee`, `baseFee`, and `resourceFee` are numbers in XLM for UI display.
+export interface FeeEstimate {
+  minFee: string;
+  fee: number;
+  baseFee: number;
+  resourceFee: number;
+}
+
 const server = new rpc.Server(RPC_URL, { allowHttp: false });
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -205,9 +215,9 @@ export async function depositToContract(
     new Address(publicKey).toScVal(),
     nativeToScVal(amount, { type: 'i128' }),
   );
-  const assembled = await buildAndSimulate(publicKey, op);
-  const signed = await signTx(assembled);
-  const hash = await submitAndWait(signed);
+  const { assembledXdr } = await buildAndSimulate(publicKey, op);
+  const signed = await signTx(assembledXdr);
+  const hash = await submitAndWait(signed, onHashKnown);
   clearCache();
   return hash;
 }
@@ -229,9 +239,9 @@ export async function withdrawFromContract(
     new Address(recipientPublicKey).toScVal(),
     nativeToScVal(amount, { type: 'i128' }),
   );
-  const assembled = await buildAndSimulate(adminPublicKey, op);
-  const signed = await signTx(assembled);
-  const hash = await submitAndWait(signed);
+  const { assembledXdr } = await buildAndSimulate(adminPublicKey, op);
+  const signed = await signTx(assembledXdr);
+  const hash = await submitAndWait(signed, onHashKnown);
   clearCache();
   return hash;
 }
