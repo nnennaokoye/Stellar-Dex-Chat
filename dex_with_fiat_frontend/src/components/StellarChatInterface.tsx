@@ -11,6 +11,7 @@ import ChatHistorySidebar from './ChatHistorySidebar';
 import StellarFiatModal from './StellarFiatModal';
 import BankDetailsModal from './BankDetailsModal';
 import UserSettings from './UserSettings';
+import NotificationsCenter from './NotificationsCenter';
 import { TransactionData } from '@/types';
 import SkeletonChat from '@/components/ui/skeleton/SkeletonChat';
 import SkeletonSidebar from '@/components/ui/skeleton/SkeletonSidebar';
@@ -313,6 +314,8 @@ export default function StellarChatInterface() {
             >
               <Plus className="w-5 h-5" />
             </button>
+
+            <NotificationsCenter />
 
             <button
               onClick={() => setShowSettings(true)}

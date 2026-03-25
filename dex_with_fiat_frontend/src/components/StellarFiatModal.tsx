@@ -11,12 +11,12 @@ import {
 import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import {
   BRIDGE_LIMIT_WARNING_PERCENT,
-  depositToContract,
   getBridgeLimit,
-  withdrawFromContract,
   stroopsToDisplay,
   simulateDeposit,
   simulateWithdraw,
+  depositToContract,
+  withdrawFromContract,
   FeeEstimate,
 } from '@/lib/stellarContract';
 import { perf } from '@/lib/perf';
@@ -25,6 +25,7 @@ import {
   formatFiatAmount,
 } from '@/lib/cryptoPriceService';
 import SkeletonPayout from '@/components/ui/skeleton/SkeletonPayout';
+import { useNotifications } from '@/hooks/useNotifications';
 
 interface StellarFiatModalProps {
   isOpen: boolean;
@@ -71,6 +72,7 @@ export default function StellarFiatModal({
   onDepositSuccess,
 }: StellarFiatModalProps) {
   const { connection, signTx } = useStellarWallet();
+  const { addNotification } = useNotifications();
 
   const [amount, setAmount] = useState(defaultAmount);
   const [activePreset, setActivePreset] = useState<number | null>(null);
@@ -277,6 +279,7 @@ export default function StellarFiatModal({
     setErrorMsg('');
     perf.mark('Tx: Submission');
     try {
+      addNotification('tx_submit', `Submitting ${isAdminMode ? 'withdrawal' : 'deposit'} transaction...`);
       let hash: string;
       if (isAdminMode) {
         const to = recipient || connection.publicKey;
@@ -296,6 +299,10 @@ export default function StellarFiatModal({
       setTxHash(hash);
       perf.measure('Tx: Submission');
       setStatus('success');
+      addNotification('tx_confirm', `Transaction confirmed successfully! (${hash.slice(0, 8)}...)`);
+      if (!isAdminMode && onDepositSuccess) {
+        onDepositSuccess(parseFloat(amount || '0'));
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Transaction failed');
       setStatus('error');

@@ -3,6 +3,13 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Bytes, Env, Symbol, Vec,
 };
 
+// ── Constants ─────────────────────────────────────────────────────────────
+/// Minimum remaining ledgers for instance storage (~30 days)
+pub const MIN_TTL: u32 = 518_400;
+
+/// Maximum ledgers for instance storage TTL extension (~31 days)
+pub const MAX_TTL: u32 = 535_680;
+
 // ── Error codes ───────────────────────────────────────────────────────────
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -91,6 +98,7 @@ pub struct FiatBridge;
 impl FiatBridge {
     /// Initialise the bridge once. Sets admin and registers the first whitelisted token.
     pub fn init(env: Env, admin: Address, token: Address, limit: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
         }
@@ -119,6 +127,7 @@ impl FiatBridge {
         token: Address,
         reference: Bytes,
     ) -> Result<u64, Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         from.require_auth();
 
         // ── Cooldown check ────────────────────────────────────────────
@@ -129,11 +138,7 @@ impl FiatBridge {
             .unwrap_or(0);
         if cooldown > 0 {
             let last_key = DataKey::LastDepositLedger(from.clone());
-            if let Some(last_ledger) = env
-                .storage()
-                .instance()
-                .get::<DataKey, u32>(&last_key)
-            {
+            if let Some(last_ledger) = env.storage().instance().get::<DataKey, u32>(&last_key) {
                 if env.ledger().sequence() - last_ledger < cooldown {
                     return Err(Error::CooldownActive);
                 }
@@ -157,11 +162,7 @@ impl FiatBridge {
             return Err(Error::ExceedsLimit);
         }
 
-        token::Client::new(&env, &token).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
+        token::Client::new(&env, &token).transfer(&from, &env.current_contract_address(), &amount);
 
         // ── Create deposit receipt ────────────────────────────────────
         let receipt_id: u64 = env
@@ -213,6 +214,8 @@ impl FiatBridge {
     /// Withdraw tokens from the bridge. Caller must authorise.
     /// No whitelist check — allows draining balances of removed tokens.
     pub fn withdraw(env: Env, to: Address, amount: i128, token: Address) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        to.require_auth();
         if amount <= 0 {
             return Err(Error::ZeroAmount);
         }
@@ -246,6 +249,7 @@ impl FiatBridge {
         amount: i128,
         token: Address,
     ) -> Result<u64, Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
@@ -289,6 +293,7 @@ impl FiatBridge {
 
     /// Execute a matured withdrawal request.
     pub fn execute_withdrawal(env: Env, request_id: u64) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let request: WithdrawRequest = env
             .storage()
             .persistent()
@@ -321,6 +326,7 @@ impl FiatBridge {
 
     /// Cancel a pending withdrawal request. Admin only.
     pub fn cancel_withdrawal(env: Env, request_id: u64) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
@@ -345,6 +351,7 @@ impl FiatBridge {
     /// Set the maximum tokens that may be withdrawn within a rolling 24-hour window
     /// (~17 280 ledgers). Setting to 0 disables the daily cap. Admin only.
     pub fn set_daily_limit(env: Env, limit: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
@@ -362,6 +369,7 @@ impl FiatBridge {
 
     /// Set the mandatory delay period for withdrawals (in ledgers). Admin only.
     pub fn set_lock_period(env: Env, ledgers: u32) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
@@ -374,6 +382,7 @@ impl FiatBridge {
 
     /// Update the per-deposit limit for a specific token. Admin only.
     pub fn set_limit(env: Env, token: Address, new_limit: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         if new_limit <= 0 {
             return Err(Error::ZeroAmount);
         }
@@ -398,6 +407,7 @@ impl FiatBridge {
 
     /// Hand admin rights to a new address. Current admin must authorise.
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
@@ -412,6 +422,7 @@ impl FiatBridge {
 
     /// Add a new token to the whitelist. Admin only.
     pub fn add_token(env: Env, token: Address, limit: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         if limit <= 0 {
             return Err(Error::ZeroAmount);
         }
@@ -438,6 +449,7 @@ impl FiatBridge {
     /// Remove a token from the whitelist. Admin only.
     /// Does not affect existing balances — admin can still drain remaining tokens.
     pub fn remove_token(env: Env, token: Address) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
@@ -536,7 +548,6 @@ impl FiatBridge {
             .get(&DataKey::WithdrawQueue(request_id))
     }
 
-
     /// Get the current lock period in ledgers.
     pub fn get_lock_period(env: Env) -> u32 {
         env.storage()
@@ -607,6 +618,7 @@ impl FiatBridge {
 
     /// Set the per-address deposit cooldown period (in ledgers). Admin only.
     pub fn set_cooldown(env: Env, ledgers: u32) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
