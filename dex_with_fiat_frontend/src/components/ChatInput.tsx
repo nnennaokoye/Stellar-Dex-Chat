@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Send, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -15,16 +16,57 @@ export default function ChatInput({
   placeholder = 'Type your message...',
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
+  const [showCommands, setShowCommands] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  const commands = [
+    { cmd: '/deposit', desc: 'Add funds to your Stellar account' },
+    { cmd: '/rates', desc: 'Check current market conversion rates' },
+    { cmd: '/portfolio', desc: 'View your asset balance and value' },
+    { cmd: '/help', desc: 'Get assistance with platform features' },
+  ];
+
+  const handleInputChange = (val: string) => {
+    setMessage(val);
+    if (val === '/') {
+      setShowCommands(true);
+      setSelectedIndex(0);
+    } else if (!val.startsWith('/') || val === '') {
+      setShowCommands(false);
+    }
+  };
+
+  const selectCommand = (cmd: string) => {
+    setMessage(cmd + ' ');
+    setShowCommands(false);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim() && !isLoading) {
       onSendMessage(message.trim());
       setMessage('');
+      setShowCommands(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showCommands) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex((prev) => (prev + 1) % commands.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex((prev) => (prev - 1 + commands.length) % commands.length);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        selectCommand(commands[selectedIndex].cmd);
+      } else if (e.key === 'Escape') {
+        setShowCommands(false);
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -34,14 +76,43 @@ export default function ChatInput({
   return (
     <form
       onSubmit={handleSubmit}
-      className="theme-surface p-6 transition-colors duration-300"
+      className="theme-surface p-6 transition-colors duration-300 relative"
     >
+      <AnimatePresence>
+        {showCommands && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="absolute bottom-full left-6 mb-2 w-64 theme-surface border rounded-xl shadow-2xl overflow-hidden z-50"
+          >
+            <div className="p-2 border-b bg-gray-50/50">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest pl-2">Commands</span>
+            </div>
+            {commands.map((c, i) => (
+              <button
+                key={c.cmd}
+                type="button"
+                onClick={() => selectCommand(c.cmd)}
+                onMouseEnter={() => setSelectedIndex(i)}
+                className={`w-full flex flex-col items-start px-4 py-3 transition-colors ${
+                  i === selectedIndex ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50 border-l-4 border-transparent'
+                }`}
+              >
+                <span className="font-bold text-sm text-gray-900">{c.cmd}</span>
+                <span className="text-xs text-gray-500">{c.desc}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="flex items-end space-x-3">
         <div className="flex-1 relative">
           <textarea
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={isLoading}
             className="theme-input w-full resize-none border rounded-lg px-4 py-3 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"

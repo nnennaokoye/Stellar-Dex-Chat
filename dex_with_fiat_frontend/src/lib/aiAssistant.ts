@@ -16,6 +16,8 @@ type GuardrailMatch = {
   reason: string;
 };
 
+import { findFAQMatch } from './faq';
+
 export class AIAssistant {
   private static guardrailCounts: Record<GuardrailCategory, number> = {
     unsupported_request: 0,
@@ -33,11 +35,25 @@ export class AIAssistant {
     context?: Record<string, unknown>,
   ): Promise<AIAnalysisResult> {
     try {
+      // 1. Check Guardrails
       const guardrailMatch = this.classifyGuardrail(message);
       if (guardrailMatch) {
         return this.buildGuardrailResponse(guardrailMatch, message);
       }
 
+      // 2. Check Local FAQ Knowledge Base (#51)
+      const faqMatch = findFAQMatch(message);
+      if (faqMatch) {
+        return {
+          intent: faqMatch.intent,
+          confidence: 0.98, // High confidence for hardcoded FAQs
+          extractedData: {},
+          requiredQuestions: [],
+          suggestedResponse: faqMatch.answer,
+        };
+      }
+
+      // 3. AI Analysis Fallback
       const prompt = this.buildAnalysisPrompt(message, context);
       const result = await this.model.generateContent(prompt);
       const response = result.response.text();
