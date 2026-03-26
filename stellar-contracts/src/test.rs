@@ -517,4 +517,173 @@ mod tests {
         let result = bridge.try_emergency_drain(&contract_id);
         assert_eq!(result, Err(Ok(Error::InvalidRecipient)));
     }
+
+    // ── Mock oracle contract ──────────────────────────────────────────
+    // Returns a fixed price for any token: 0.10 USD (1_000_000 in 7-decimal)
+    // Equivalent to $0.10 per token unit.
+    mod mock_oracle {
+        use soroban_sdk::{contract, contractimpl, Address, Env};
+
+        #[contract]
+        pub struct MockOracle;
+
+        #[contractimpl]
+        impl MockOracle {
+            /// Returns a fixed price per token (7 decimal places).
+            /// 1_000_000 = $0.10 per unit (XLM-like pricing).
+            pub fn get_price(_env: Env, _token: Address) -> Option<i128> {
+                Some(1_000_000) // $0.10
+            }
+        }
+    }
+
+    fn setup_oracle(env: &Env) -> Address {
+        env.register(mock_oracle::MockOracle, ())
+    }
+
+    // ── Oracle integration tests ──────────────────────────────────────
+
+    #[test]
+    fn test_set_and_get_oracle() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
+        assert_eq!(bridge.get_oracle(), None);
+        let oracle_addr = setup_oracle(&env);
+        bridge.set_oracle(&oracle_addr);
+        assert_eq!(bridge.get_oracle(), Some(oracle_addr));
+    }
+
+    #[test]
+    fn test_set_and_get_fiat_limit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
+        assert_eq!(bridge.get_fiat_limit(), None);
+        bridge.set_fiat_limit(&1_000_000); // $10,000
+        assert_eq!(bridge.get_fiat_limit(), Some(1_000_000));
+    }
+
+    #[test]
+    fn test_set_fiat_limit_zero_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
+        let result = bridge.try_set_fiat_limit(&0);
+        assert_eq!(result, Err(Ok(Error::ZeroAmount)));
+    }
+
+    #[test]
+    fn test_deposit_within_fiat_limit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+        let oracle_addr = setup_oracle(&env);
+        bridge.set_oracle(&oracle_addr);
+        // $10,000 limit in cents = 1_000_000
+        bridge.set_fiat_limit(&1_000_000);
+
+        let user = Address::generate(&env);
+        token_sac.mint(&user, &50_000);
+
+        // 100 tokens at $0.10 = $10 = 1000 cents. Well within $10,000.
+        let receipt_id = bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        assert!(receipt_id >= 0);
+        assert_eq!(bridge.get_balance(), 100);
+    }
+
+    #[test]
+    fn test_deposit_exceeds_fiat_limit() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+        let oracle_addr = setup_oracle(&env);
+        bridge.set_oracle(&oracle_addr);
+        // $5 limit = 500 cents
+        bridge.set_fiat_limit(&500);
+
+        let user = Address::generate(&env);
+        token_sac.mint(&user, &100_000);
+
+        // 100 tokens at $0.10 = $10 = 1,000 cents → over $5 (500 cents) limit
+        let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        assert_eq!(result, Err(Ok(Error::ExceedsFiatLimit)));
+    }
+
+    #[test]
+    fn test_daily_volume_accumulates() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+        let oracle_addr = setup_oracle(&env);
+        bridge.set_oracle(&oracle_addr);
+        // $25 limit = 2_500 cents
+        bridge.set_fiat_limit(&2_500);
+
+        let user = Address::generate(&env);
+        token_sac.mint(&user, &100_000);
+
+        // 100 tokens at $0.10 = $10 = 1,000 cents → fine (within $25)
+        bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        // 100 more at $0.10 = $10 = 1,000 cents → total 2,000 → still fine
+        bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        // 100 more → total would be 3,000 > 2,500 → rejected
+        let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        assert_eq!(result, Err(Ok(Error::ExceedsFiatLimit)));
+    }
+
+    #[test]
+    fn test_daily_volume_resets_after_window() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+        let oracle_addr = setup_oracle(&env);
+        bridge.set_oracle(&oracle_addr);
+        // $15 limit = 1_500 cents
+        bridge.set_fiat_limit(&1_500);
+
+        let user = Address::generate(&env);
+        token_sac.mint(&user, &100_000);
+
+        // 100 tokens at $0.10 = $10 = 1_000 cents → fine (within $15)
+        bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env));
+
+        // Another 100 = $10 = 1,000 cents → total 2,000 > 1,500 → rejected
+        let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        assert_eq!(result, Err(Ok(Error::ExceedsFiatLimit)));
+
+        // Advance past 24h window (17_280 ledgers)
+        let current = env.ledger().sequence();
+        env.ledger().with_mut(|li| {
+            li.sequence_number = current + 17_280;
+        });
+
+        // Now the window has reset — 100 tokens = $10 = 1,000 cents → within limit
+        bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env));
+    }
+
+    #[test]
+    fn test_deposit_without_fiat_limit_skips_check() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 500);
+        // No oracle or fiat limit set — deposit should work as before
+        let user = Address::generate(&env);
+        token_sac.mint(&user, &1000);
+        bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        assert_eq!(bridge.get_balance(), 100);
+    }
+
+    #[test]
+    fn test_fiat_limit_set_but_no_oracle_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+        // Set fiat limit but no oracle
+        bridge.set_fiat_limit(&1_000_000);
+        let user = Address::generate(&env);
+        token_sac.mint(&user, &5000);
+        let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env));
+        assert_eq!(result, Err(Ok(Error::OracleNotSet)));
+    }
 }

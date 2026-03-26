@@ -3,6 +3,8 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Bytes, Env, Symbol, Vec,
 };
 
+pub mod oracle;
+
 // ── Constants ─────────────────────────────────────────────────────────────
 /// Minimum remaining ledgers for instance storage (~30 days)
 pub const MIN_TTL: u32 = 518_400;
@@ -48,6 +50,10 @@ pub enum Error {
     NoEmergencyRecoveryAddress = 18,
     /// The recipient address is invalid (e.g., contract address itself).
     InvalidRecipient = 19,
+    /// The deposit's USD-equivalent value exceeds the global fiat deposit limit.
+    ExceedsFiatLimit = 20,
+    /// No oracle contract has been configured yet.
+    OracleNotSet = 21,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -101,6 +107,19 @@ pub struct WithdrawEntry {
     pub amount: i128,
 }
 
+/// Tracks a user's rolling 24-hour deposit volume in USD-equivalent cents.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserDailyVolume {
+    /// Cumulative USD-equivalent value (in cents, 1 USD = 100) within the window.
+    pub usd_cents: i128,
+    /// Ledger sequence when the window started.
+    pub window_start: u32,
+}
+
+/// Oracle prices are returned with 7 decimal places (matching Stellar precision).
+pub const ORACLE_PRICE_DECIMALS: i128 = 10_000_000;
+
 /// Maximum allowed length for a deposit reference (bytes).
 const MAX_REFERENCE_LEN: u32 = 64;
 
@@ -152,6 +171,14 @@ pub enum DataKey {
     QueuedAdminAction(u64),
     /// Emergency recovery address
     EmergencyRecoveryAddress,
+
+    // ── Added for oracle-based fiat deposit limits (#159) ──
+    /// Address of the price oracle contract.
+    Oracle,
+    /// Global fiat-value deposit limit in USD cents (e.g. 1_000_000 = $10,000).
+    FiatLimit,
+    /// Rolling 24-hour USD-equivalent deposit volume per user.
+    UserDailyVolume(Address),
 }
 
 /// Approximate number of ledgers in a 24-hour window (5-second close time).
@@ -325,6 +352,9 @@ impl FiatBridge {
         if amount > config.limit {
             return Err(Error::ExceedsLimit);
         }
+
+        // ── Fiat-value limit check (if oracle + fiat limit are configured) ──
+        Self::validate_fiat_limit(&env, &from, &token, amount)?;
 
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&from, env.current_contract_address(), &amount);
@@ -661,6 +691,116 @@ impl FiatBridge {
         env.storage()
             .persistent()
             .set(&DataKey::TokenRegistry(token), &config);
+        Ok(())
+    }
+
+    // ── Oracle-based fiat deposit limits (#159) ──────────────────────────
+
+    /// Set the address of the price oracle contract. Admin only.
+    pub fn set_oracle(env: Env, oracle: Address) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Oracle, &oracle);
+        Ok(())
+    }
+
+    /// Set the global fiat-value deposit limit (in USD cents). Admin only.
+    /// For example, `1_000_000` means a $10,000 limit.
+    pub fn set_fiat_limit(env: Env, limit_usd_cents: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        if limit_usd_cents <= 0 {
+            return Err(Error::ZeroAmount);
+        }
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::FiatLimit, &limit_usd_cents);
+        Ok(())
+    }
+
+    /// Returns the current global fiat deposit limit in USD cents, if set.
+    pub fn get_fiat_limit(env: Env) -> Option<i128> {
+        env.storage().instance().get(&DataKey::FiatLimit)
+    }
+
+    /// Returns the oracle contract address, if set.
+    pub fn get_oracle(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Oracle)
+    }
+
+    /// Returns the current rolling 24-hour USD deposit volume for a user, if any.
+    pub fn get_user_daily_volume(env: Env, user: Address) -> Option<UserDailyVolume> {
+        env.storage()
+            .instance()
+            .get(&DataKey::UserDailyVolume(user))
+    }
+
+    /// Validate a deposit against the fiat limit (if oracle and limit are configured).
+    /// Calculates the USD-equivalent of `amount` for `token`, adds it to the user's
+    /// rolling 24-hour volume, and rejects if the total exceeds the fiat limit.
+    /// Updates the volume tracker on success. No-op if oracle or fiat limit is unset.
+    fn validate_fiat_limit(
+        env: &Env,
+        depositor: &Address,
+        token: &Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        let fiat_limit: i128 = match env.storage().instance().get(&DataKey::FiatLimit) {
+            Some(l) => l,
+            None => return Ok(()),
+        };
+
+        let oracle_addr: Address = match env.storage().instance().get(&DataKey::Oracle) {
+            Some(a) => a,
+            None => return Err(Error::OracleNotSet),
+        };
+
+        let oracle = crate::oracle::OracleClient::new(env, &oracle_addr);
+        let price: i128 = oracle
+            .get_price(token)
+            .unwrap_or(0);
+        if price <= 0 {
+            return Err(Error::OracleNotSet);
+        }
+
+        // Oracle returns price per token unit in USD with 7 decimal places.
+        // usd_value = amount * price / ORACLE_PRICE_DECIMALS
+        // usd_cents = usd_value * 100 = (amount * price) / (ORACLE_PRICE_DECIMALS / 100)
+        let usd_cents = (amount * price) / (ORACLE_PRICE_DECIMALS / 100);
+
+        let current_ledger = env.ledger().sequence();
+        let vol_key = DataKey::UserDailyVolume(depositor.clone());
+        let mut volume: UserDailyVolume = env
+            .storage()
+            .instance()
+            .get(&vol_key)
+            .unwrap_or(UserDailyVolume {
+                usd_cents: 0,
+                window_start: current_ledger,
+            });
+
+        if current_ledger - volume.window_start >= WINDOW_LEDGERS {
+            volume.usd_cents = 0;
+            volume.window_start = current_ledger;
+        }
+
+        if volume.usd_cents + usd_cents > fiat_limit {
+            return Err(Error::ExceedsFiatLimit);
+        }
+
+        volume.usd_cents += usd_cents;
+        env.storage().instance().set(&vol_key, &volume);
+
         Ok(())
     }
 
