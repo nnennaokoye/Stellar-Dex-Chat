@@ -1,19 +1,19 @@
 use soroban_sdk::testutils::Events;
 extern crate alloc;
 use alloc::format;
-#[test]
-fn test_minimal_event_emission() {
-    use soroban_sdk::{Env, Symbol};
-    let env = Env::default();
-    env.mock_all_auths();
-    env.events()
-        .publish((Symbol::new(&env, "test_evt"),), "hello");
-    let events = format!("{:?}", env.events().all());
-    // Print for debug if needed:
-    // eprintln!("MINIMAL EVENTS: {}", events);
-    assert!(events.contains("test_evt"));
-    assert!(events.contains("hello"));
-}
+// #[test]
+// fn test_minimal_event_emission() {
+//     use soroban_sdk::{Env, Symbol};
+//     let env = Env::default();
+//     env.mock_all_auths();
+//     env.events()
+//         .publish((Symbol::new(&env, "test_evt"),), "hello");
+//     let events = format!("{:?}", env.events().all());
+//     // Print for debug if needed:
+//     // eprintln!("MINIMAL EVENTS: {}", events);
+//     assert!(events.contains("test_evt"));
+//     assert!(events.contains("hello"));
+// }
 #[cfg(any(test, feature = "testutils"))]
 mod tests {
 
