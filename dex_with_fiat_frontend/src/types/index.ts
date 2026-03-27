@@ -41,6 +41,8 @@ export interface ChatSession {
   createdAt: Date;
   lastUpdated: Date;
   walletAddress?: string;
+  pinned?: boolean;
+  pinnedAt?: Date;
 }
 
 export interface ChatHistoryState {
