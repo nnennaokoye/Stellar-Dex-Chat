@@ -405,7 +405,7 @@ export default function StellarChatInterface() {
 
             <button
               onClick={() => setIsReceiptDrawerOpen(true)}
-              title={t('header.receipts' as any) || 'Receipts'}
+              title={t('header.receipts')}
               className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-600'}`}
             >
               <Receipt className="w-5 h-5" />
@@ -461,7 +461,7 @@ export default function StellarChatInterface() {
                       >
                         {t('header.switch_account')}
                       </div>
-                      {accounts.map((account: { address: string }, idx: number) => (
+                      {accounts.map((account, idx) => (
                         <button
                           key={account.address}
                           onClick={() => {

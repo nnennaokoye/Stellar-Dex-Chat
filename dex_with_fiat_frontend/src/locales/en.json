@@ -29,7 +29,9 @@
       "rates": "Check conversion rates",
       "portfolio": "View transaction history",
       "convert": "Convert 100 USDC to USD"
-    }
+    },
+    "error_message": "Message failed to send. Please check your connection.",
+    "cancelled_message": "Request cancelled by user."
   },
   "header": {
     "title": "DexFiat · Stellar",

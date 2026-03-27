@@ -140,7 +140,7 @@ export default function ReceiptDrawer({
                     )}
                     <div className="flex justify-between text-[10px] text-gray-500 pt-2 border-t dark:border-gray-700">
                       <span>{tx.id}</span>
-                      <span>{tx.createdAt.toLocaleString()}</span>
+                      <span>{new Date(tx.createdAt).toLocaleString()}</span>
                     </div>
                   </div>
                 </div>

@@ -11,7 +11,7 @@ type NestedKeyOf<T> = T extends object
 export type TKey = NestedKeyOf<TranslationKeys>;
 
 interface TranslationContextType {
-  t: (key: TKey, params?: Record<string, string | number>) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
   locale: string;
   setLocale: (locale: string) => void;
 }
@@ -43,7 +43,7 @@ export function TranslationProvider({ children }: { children: React.ReactNode })
     return value;
   }, [locale]);
 
-  const value = useMemo(() => ({ t: t as any, locale, setLocale }), [t, locale]);
+  const value = useMemo(() => ({ t, locale, setLocale }), [t, locale]);
 
   return (
     <TranslationContext.Provider value={value}>

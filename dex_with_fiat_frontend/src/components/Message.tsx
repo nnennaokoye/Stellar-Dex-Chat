@@ -124,7 +124,7 @@ export default function Message({ message, onActionClick }: MessageProps) {
               className={`flex items-center mt-2 text-xs ${isDarkMode ? 'text-gray-400' : 'text-gray-500'} ${isUser ? 'justify-end' : 'justify-start'}`}
             >
               <Clock className="w-3 h-3 mr-1" />
-              {message.timestamp.toLocaleTimeString([], {
+              {new Date(message.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
@@ -153,7 +153,7 @@ export default function Message({ message, onActionClick }: MessageProps) {
                 }`}
               >
                 <XCircle className="h-4 w-4" />
-                <span>{t('chat.error_message' as any) || 'Message failed to send.'}</span>
+                <span>{t('chat.error_message')}</span>
                 <button 
                   onClick={() => window.location.reload()} 
                   className="ml-2 underline flex items-center gap-1"
@@ -172,7 +172,7 @@ export default function Message({ message, onActionClick }: MessageProps) {
                 }`}
               >
                 <AlertTriangle className="h-4 w-4" />
-                <span>Request cancelled by user.</span>
+                <span>{t('chat.cancelled_message')}</span>
               </div>
             )}
             {message.metadata?.suggestedActions &&
