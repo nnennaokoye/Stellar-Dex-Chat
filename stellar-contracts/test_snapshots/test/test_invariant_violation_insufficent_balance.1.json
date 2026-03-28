@@ -74,7 +74,8 @@
                 },
                 {
                   "u32": 0
-                }
+                },
+                "void"
               ]
             }
           },
@@ -235,6 +236,12 @@
                     "val": {
                       "u32": 0
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "memo_hash"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -769,7 +776,8 @@
             "topics": [
               {
                 "symbol": "rcpt_issd"
-              }
+              },
+              "void"
             ],
             "data": {
               "u64": "1"

@@ -55,11 +55,11 @@ fn test_deposit_and_withdraw() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
 
-    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(token.balance(&user), 800);
     assert_eq!(token.balance(&contract_id), 200);
 
-    let req_id = bridge.request_withdrawal(&user, &100, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None);
     bridge.execute_withdrawal(&req_id, &None, &0, &0);
 
     assert_eq!(token.balance(&user), 900);
@@ -74,13 +74,13 @@ fn test_time_locked_withdrawal() {
     let (contract_id, bridge, _, token_addr, token, token_sac) = setup_bridge(&env, 500);
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
-    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     bridge.set_lock_period(&100);
     assert_eq!(bridge.get_lock_period(), 100);
 
     let start_ledger = env.ledger().sequence();
-    let req_id = bridge.request_withdrawal(&user, &100, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None);
 
     let req = bridge.get_withdrawal_request(&req_id).unwrap();
     assert_eq!(req.to, user);
@@ -187,9 +187,9 @@ fn test_cancel_withdrawal() {
     let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 500);
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
-    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
-    let req_id = bridge.request_withdrawal(&user, &100, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None);
     assert!(bridge.get_withdrawal_request(&req_id).is_some());
 
     bridge.cancel_withdrawal(&req_id);
@@ -220,9 +220,9 @@ fn test_deposit_cooldown_blocks_rapid_second_deposit() {
     bridge.set_cooldown(&10);
     assert_eq!(bridge.get_cooldown(), 10);
 
-    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
-    let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    let result = bridge.try_deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(result, Err(Ok(Error::CooldownActive)));
 }
 
@@ -237,13 +237,13 @@ fn test_deposit_succeeds_after_cooldown_period() {
 
     bridge.set_cooldown(&10);
     let start_ledger = env.ledger().sequence();
-    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     env.ledger().with_mut(|li| {
         li.sequence_number = start_ledger + 10;
     });
 
-    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_user_deposited(&user), 200);
 }
 
@@ -259,13 +259,13 @@ fn test_deposit_cooldown_is_per_address_only() {
     token_sac.mint(&user_b, &500);
 
     bridge.set_cooldown(&10);
-    bridge.deposit(&user_a, &50, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user_a, &50, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // user_b not blocked
-    bridge.deposit(&user_b, &50, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user_b, &50, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // user_a still blocked
-    let result = bridge.try_deposit(&user_a, &50, &token_addr, &Bytes::new(&env), &0, &0);
+    let result = bridge.try_deposit(&user_a, &50, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(result, Err(Ok(Error::CooldownActive)));
 }
 
@@ -280,7 +280,7 @@ fn test_last_deposit_record_expires_with_ttl() {
 
     bridge.set_cooldown(&5);
     let start_ledger = env.ledger().sequence();
-    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_last_deposit_ledger(&user), Some(start_ledger));
 
     env.ledger().with_mut(|li| {
@@ -323,7 +323,7 @@ fn test_over_limit_deposit() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
 
-    let result = bridge.try_deposit(&user, &600, &token_addr, &Bytes::new(&env), &0, &0);
+    let result = bridge.try_deposit(&user, &600, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(result, Err(Ok(Error::ExceedsLimit)));
 }
 
@@ -335,7 +335,7 @@ fn test_zero_amount_deposit() {
     let (_, bridge, _, token_addr, _, _) = setup_bridge(&env, 500);
     let user = Address::generate(&env);
 
-    let result = bridge.try_deposit(&user, &0, &token_addr, &Bytes::new(&env), &0, &0);
+    let result = bridge.try_deposit(&user, &0, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(result, Err(Ok(Error::ZeroAmount)));
 }
 
@@ -347,10 +347,10 @@ fn test_insufficient_funds_withdraw() {
     let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 500);
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
-    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Requesting more than net deposits (100) should fail due to invariant check
-    let result = bridge.try_request_withdrawal(&user, &200, &token_addr);
+    let result = bridge.try_request_withdrawal(&user, &200, &token_addr, &None);
     assert_eq!(result, Err(Ok(Error::InternalError)));
 }
 
@@ -378,15 +378,15 @@ fn test_per_user_deposit_tracking() {
     assert_eq!(bridge.get_user_deposited(&user1), 0);
     assert_eq!(bridge.get_user_deposited(&user2), 0);
 
-    bridge.deposit(&user1, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user1, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_user_deposited(&user1), 100);
     assert_eq!(bridge.get_total_deposited(), 100);
 
-    bridge.deposit(&user1, &50, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user1, &50, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_user_deposited(&user1), 150);
     assert_eq!(bridge.get_total_deposited(), 150);
 
-    bridge.deposit(&user2, &200, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user2, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_user_deposited(&user2), 200);
     assert_eq!(bridge.get_user_deposited(&user1), 150);
     assert_eq!(bridge.get_total_deposited(), 350);
@@ -421,14 +421,14 @@ fn test_total_withdrawn_tracking() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
 
-    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_total_withdrawn(), 0);
 
     bridge.withdraw(&user, &200, &token_addr);
     assert_eq!(bridge.get_total_withdrawn(), 200);
     assert_eq!(token.balance(&contract_id), 300);
 
-    let req_id = bridge.request_withdrawal(&user, &100, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None);
     bridge.execute_withdrawal(&req_id, &None, &0, &0);
     assert_eq!(bridge.get_total_withdrawn(), 300);
 }
@@ -442,13 +442,13 @@ fn test_total_liabilities_tracking() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &1_000);
 
-    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_total_liabilities(), 0);
 
-    let req1 = bridge.request_withdrawal(&user, &100, &token_addr);
+    let req1 = bridge.request_withdrawal(&user, &100, &token_addr, &None);
     assert_eq!(bridge.get_total_liabilities(), 100);
 
-    let req2 = bridge.request_withdrawal(&user, &50, &token_addr);
+    let req2 = bridge.request_withdrawal(&user, &50, &token_addr, &None);
     assert_eq!(bridge.get_total_liabilities(), 150);
 
     bridge.execute_withdrawal(&req1, &None, &0, &0);
@@ -480,7 +480,7 @@ fn test_invariant_violation_insufficent_balance() {
 
     // Now balance < net_deposited (400 < 500)
     // Any mutation should fail because of check_invariants
-    let result = bridge.try_deposit(&user, &10, &token_addr, &Bytes::new(&env), &0, &0);
+    let result = bridge.try_deposit(&user, &10, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(result, Err(Ok(Error::InsufficientFunds)));
 }
 
@@ -501,10 +501,10 @@ fn test_withdrawal_cooldown_not_triggered_below_threshold() {
     assert_eq!(bridge.get_withdrawal_threshold(), 500);
 
     // Deposit below threshold — should NOT set LastLargeDeposit
-    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Withdrawal should succeed immediately (no cooldown recorded)
-    let req_id = bridge.request_withdrawal(&user, &50, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &50, &token_addr, &None);
     bridge.execute_withdrawal(&req_id, &None, &0, &0);
     drop(admin);
 }
@@ -522,10 +522,10 @@ fn test_withdrawal_cooldown_blocks_after_large_deposit() {
     bridge.set_withdrawal_cooldown(&100, &500);
 
     // Deposit at or above threshold
-    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Immediate withdrawal request should be blocked
-    let result = bridge.try_request_withdrawal(&user, &100, &token_addr);
+    let result = bridge.try_request_withdrawal(&user, &100, &token_addr, &None);
     assert_eq!(result, Err(Ok(Error::CooldownActive)));
 }
 
@@ -541,10 +541,10 @@ fn test_withdrawal_cooldown_expires() {
     bridge.set_withdrawal_cooldown(&100, &500);
     let deposit_ledger = env.ledger().sequence();
 
-    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Still blocked before cooldown expires
-    let result = bridge.try_request_withdrawal(&user, &100, &token_addr);
+    let result = bridge.try_request_withdrawal(&user, &100, &token_addr, &None);
     assert_eq!(result, Err(Ok(Error::CooldownActive)));
 
     // Advance past cooldown
@@ -553,7 +553,7 @@ fn test_withdrawal_cooldown_expires() {
     });
 
     // Now the request should succeed
-    let req_id = bridge.request_withdrawal(&user, &100, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None);
     bridge.execute_withdrawal(&req_id, &None, &0, &0);
     assert_eq!(token.balance(&user), 4_600); // 5000 - 500 deposited + 100 withdrawn
 }
@@ -571,10 +571,10 @@ fn test_withdrawal_cooldown_disabled_when_zeroed() {
     bridge.set_withdrawal_cooldown(&100, &500);
     bridge.set_withdrawal_cooldown(&0, &0);
 
-    bridge.deposit(&user, &1_000, &token_addr, &Bytes::new(&env), &0, &0);
+    bridge.deposit(&user, &1_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // No cooldown active — withdrawal should go through immediately
-    let req_id = bridge.request_withdrawal(&user, &200, &token_addr);
+    let req_id = bridge.request_withdrawal(&user, &200, &token_addr, &None);
     bridge.execute_withdrawal(&req_id, &None, &0, &0);
 }
 // ── slippage tests ────────────────────────────────────────────────────────
