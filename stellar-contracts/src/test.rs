@@ -111,7 +111,7 @@ fn test_withdraw_queue_metrics_lifecycle() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &5_000);
 
-    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env));
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0);
 
     // Empty queue
     assert_eq!(bridge.get_wq_depth(), 0);
@@ -137,7 +137,7 @@ fn test_withdraw_queue_metrics_lifecycle() {
     assert_eq!(bridge.get_wq_oldest_age_ledgers(), Some(l1 - l0));
 
     // Execute first request (default lock_period=0), oldest should move to second
-    bridge.execute_withdrawal(&r1, &None);
+    bridge.execute_withdrawal(&r1, &None, &0, &0);
     assert_eq!(bridge.get_wq_depth(), 1);
     assert_eq!(bridge.get_wq_oldest_queued_ledger(), Some(l1));
     assert_eq!(bridge.get_wq_oldest_age_ledgers(), Some(0));
@@ -152,7 +152,7 @@ fn test_withdraw_queue_metrics_cancel_oldest() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &5_000);
 
-    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env));
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0);
 
     let l0 = env.ledger().sequence();
     let r1 = bridge.request_withdrawal(&user, &100, &token_addr);
